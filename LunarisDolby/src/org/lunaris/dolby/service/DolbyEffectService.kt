@@ -5,6 +5,9 @@
 
 package org.lunaris.dolby.service
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -12,6 +15,7 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.util.Log
@@ -46,6 +50,27 @@ class DolbyEffectService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // If running on O or later, promote service to foreground to avoid background-start restrictions
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val channelId = NOTIFICATION_CHANNEL_ID
+                if (nm.getNotificationChannel(channelId) == null) {
+                    val channel = NotificationChannel(channelId, "Dolby Service", NotificationManager.IMPORTANCE_LOW)
+                    nm.createNotificationChannel(channel)
+                }
+                val notif = Notification.Builder(this, channelId)
+                    .setContentTitle("Dolby")
+                    .setContentText("Dolby audio service running")
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .build()
+                startForeground(NOTIFICATION_ID, notif)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to start foreground notification: ${e.message}")
+            }
+        }
+
         repository = DolbyRepository(this)
         repository.applySavedState()
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, handler)
@@ -59,6 +84,8 @@ class DolbyEffectService : Service() {
     }
 
     override fun onDestroy() {
+        // Stop foreground state first
+        try { stopForeground(true) } catch (_: Exception) {}
         super.onDestroy()
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
         audioManager.unregisterAudioPlaybackCallback(playbackCallback)
@@ -70,10 +97,16 @@ class DolbyEffectService : Service() {
 
     companion object {
         private const val TAG = "DolbyEffectService"
+        private const val NOTIFICATION_ID = 1187
+        private const val NOTIFICATION_CHANNEL_ID = "dolby_service"
 
         fun start(context: Context) {
             val intent = Intent(context, DolbyEffectService::class.java)
-            context.startService(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
 
         fun stop(context: Context) {
